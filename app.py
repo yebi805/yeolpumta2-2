@@ -77,13 +77,17 @@ def get_secret(key: str) -> str:
 
 
 @st.cache_resource
-def get_db():
-    url = get_secret("SUPABASE_URL")
-    # 새 방식 secret key(sb_secret_...) 또는 예전 방식 service_role key 둘 다 지원
-    key = get_secret("SUPABASE_SECRET_KEY") or get_secret("SUPABASE_SERVICE_ROLE_KEY")
-    if not url or not key:
-        return None
+def _make_client(url: str, key: str):
     return create_client(url, key)
+
+
+def get_db():
+    url = get_secret("SUPABASE_URL").strip()
+    # 새 방식 secret key(sb_secret_...) 또는 예전 방식 service_role key 둘 다 지원
+    key = (get_secret("SUPABASE_SECRET_KEY") or get_secret("SUPABASE_SERVICE_ROLE_KEY")).strip()
+    if not url or not key:
+        return None   # 없을 때는 기억(캐시)하지 않음 → Secrets 넣으면 바로 반영
+    return _make_client(url, key)   # URL/키가 바뀌면 새로 연결
 
 
 class DBError(Exception):
@@ -896,8 +900,25 @@ def main():
 
     if get_db() is None:
         page_header("설정이 필요해요")
-        st.error("데이터베이스 연결 정보가 없어요. README 의 '3단계: Secrets 입력'을 따라 "
-                 "SUPABASE_URL 과 SUPABASE_SECRET_KEY 를 넣어 주세요.")
+        try:
+            found = set(st.secrets.keys())
+        except Exception as exc:
+            print(f"[SECRETS ERROR] {exc!r}")
+            if "no-secrets-found" in repr(exc):
+                st.error("Secrets 가 비어 있어요. Manage app → ⋮ → Settings → Secrets 에 4줄을 넣고 "
+                         "[Save] 를 눌렀는지 확인해 주세요.")
+                st.stop()
+            st.error("Secrets 형식(TOML)에 오류가 있어요. 확인할 것: ① 한 항목은 반드시 한 줄 "
+                     "(이름 = \"값\" 사이에 엔터 금지) ② 값은 큰따옴표 \" \" 로 감싸기 "
+                     "③ 따옴표가 짝이 맞는지. 고친 뒤 Save → Reboot app")
+            st.stop()
+        needed = ["SUPABASE_URL", "SUPABASE_SECRET_KEY", "CLASS_CODE", "ADMIN_PASSWORD"]
+        missing = [k for k in needed if k not in found]
+        if "SUPABASE_SERVICE_ROLE_KEY" in found and "SUPABASE_SECRET_KEY" in missing:
+            missing.remove("SUPABASE_SECRET_KEY")
+        st.error("데이터베이스 연결 정보가 없어요. Secrets 에 아래 이름이 없거나 값이 비어 있어요: "
+                 + ", ".join(missing or ["SUPABASE_URL / SUPABASE_SECRET_KEY 값"]))
+        st.caption("지금 Secrets 에서 읽힌 이름: " + (", ".join(sorted(found)) or "(없음)"))
         st.stop()
 
     if "db_checked" not in st.session_state:
