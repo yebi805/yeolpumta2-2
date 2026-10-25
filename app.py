@@ -340,8 +340,8 @@ def item_grid(item_id: str):
     return info["sprite"] if info else None
 
 
-def svg_from_layers(layers, px: int = 10, with_base: bool = True) -> str:
-    """색 격자 여러 장을 순서대로 겹쳐 SVG 그림으로 만든다."""
+def layers_rects(layers, with_base: bool = True) -> str:
+    """색 격자 여러 장을 순서대로 겹쳐 <rect> 조각(1칸=1단위)으로 만든다."""
     h = len(BASE_SPRITE)
     grid = [[PALETTE.get(ch) for ch in row] for row in BASE_SPRITE] if with_base else [[None] * 16 for _ in range(h)]
     for layer in layers:
@@ -356,20 +356,29 @@ def svg_from_layers(layers, px: int = 10, with_base: bool = True) -> str:
         for x, color in enumerate(row):
             if color and HEX_RE.fullmatch(str(color).lower()):   # 이상한 값은 그리지 않음 (보안)
                 rects.append(f'<rect x="{x}" y="{y}" width="1" height="1" fill="{color}"/>')
+    return "".join(rects)
+
+
+def svg_from_layers(layers, px: int = 10, with_base: bool = True) -> str:
+    h = len(BASE_SPRITE)
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 {h}" width="{16 * px}" '
             f'height="{h * px}" shape-rendering="crispEdges" role="img" aria-label="픽셀 캐릭터">'
-            + "".join(rects) + "</svg>")
+            + layers_rects(layers, with_base) + "</svg>")
 
 
-def avatar_svg(equipped: dict, px: int = 10, extra: dict = None) -> str:
-    """equipped = {부위: 아이템id}. extra = {부위: 색 격자} (등록 전 미리보기용)"""
+def equipped_layers(equipped: dict, extra: dict = None):
     layers = []
     for category in LAYER_ORDER:
         if extra and category in extra:
             layers.append(extra[category])
         elif equipped.get(category):
             layers.append(item_grid(equipped[category]))
-    return svg_from_layers(layers, px)
+    return layers
+
+
+def avatar_svg(equipped: dict, px: int = 10, extra: dict = None) -> str:
+    """equipped = {부위: 아이템id}. extra = {부위: 색 격자} (등록 전 미리보기용)"""
+    return svg_from_layers(equipped_layers(equipped, extra), px)
 
 
 def png_to_grid(data: bytes, white_is_empty: bool = True, remove_base: bool = False):
@@ -442,6 +451,165 @@ def template_png() -> bytes:
     buf = BytesIO()
     img.resize((320, 380), Image.NEAREST).save(buf, format="PNG")
     return buf.getvalue()
+
+
+# ════════════════════════════════════════════════════════════════
+# ③-2 우리 반 광장 (캐릭터들이 한 화면에 모이는 곳)
+# ════════════════════════════════════════════════════════════════
+
+PLAZA_W = 540            # 그림 가로 크기 (화면 폭에 맞춰 자동으로 늘었다 줄었다 함)
+PLAZA_FLOOR = 215        # 이 높이부터 바닥 (캐릭터가 서는 곳)
+PLAZA_ROW_H = 100        # 캐릭터 줄 간격
+PLAZA_COLS = 6           # 한 줄 최대 인원
+CHAR_SCALE = 3           # 캐릭터 크기 (16x19칸 x 3배)
+RANK_COLORS = {1: ("#ffc93c", "#b8860b"), 2: ("#d9dde6", "#8a93a6"), 3: ("#e3a06a", "#a0582a")}
+PLAZA_BACKGROUNDS = {"classroom": "🏫 교실", "field": "🌳 운동장", "night": "🌙 밤하늘", "custom": "🖼️ 내가 올린 그림"}
+
+
+def plaza_bg_svg(kind: str, image: str, w: int, h: int) -> str:
+    """배경 그림 (기본 3종은 코드로 그린 도트 배경, custom 은 관리자가 올린 이미지)"""
+    f = PLAZA_FLOOR
+    if kind == "custom" and image and re.fullmatch(r"data:image/(png|jpeg);base64,[A-Za-z0-9+/=]+", image):
+        return f'<image href="{image}" x="0" y="0" width="{w}" height="{h}" preserveAspectRatio="xMidYMid slice"/>'
+    if kind == "field":
+        parts = [f'<rect width="{w}" height="{h}" fill="#9fd8ff"/>',
+                 f'<rect y="{f - 70}" width="{w}" height="70" fill="#b9e4ff"/>']
+        for cx, cy in ((70, 40), (300, 70), (460, 30)):          # 구름
+            parts += [f'<rect x="{cx}" y="{cy}" width="70" height="16" fill="#ffffff"/>',
+                      f'<rect x="{cx + 14}" y="{cy - 12}" width="38" height="14" fill="#ffffff"/>']
+        parts += [f'<rect x="{w - 140}" y="{f - 70}" width="110" height="70" fill="#f4e3c1"/>',   # 학교 건물
+                  f'<rect x="{w - 140}" y="{f - 82}" width="110" height="12" fill="#c0504d"/>']
+        parts += [f'<rect x="{w - 130 + i * 26}" y="{f - 58}" width="14" height="14" fill="#7fb6e0"/>' for i in range(4)]
+        parts.append(f'<rect y="{f}" width="{w}" height="{h - f}" fill="#7cc66b"/>')
+        parts += [f'<rect x="{x}" y="{f}" width="30" height="{h - f}" fill="#72bb61"/>' for x in range(0, w, 60)]
+        parts.append(f'<rect y="{f + 6}" width="{w}" height="6" fill="#e08a5b"/>')
+        return "".join(parts)
+    if kind == "night":
+        parts = [f'<rect width="{w}" height="{h}" fill="#1b1f3b"/>',
+                 f'<rect y="{f - 60}" width="{w}" height="60" fill="#262b52"/>']
+        for i in range(40):                                       # 별 (항상 같은 자리)
+            x, y = (i * 137) % w, (i * 53) % (f - 40)
+            sz = 3 if i % 5 == 0 else 2
+            parts.append(f'<rect x="{x}" y="{y}" width="{sz}" height="{sz}" fill="#fff6c9"/>')
+        parts += ['<circle cx="458" cy="52" r="20" fill="#ffe9a3"/>',
+                  '<circle cx="468" cy="45" r="17" fill="#1b1f3b"/>']   # 초승달
+        parts.append(f'<rect y="{f}" width="{w}" height="{h - f}" fill="#2f3d2e"/>')
+        parts += [f'<rect x="{x}" y="{f}" width="20" height="4" fill="#3d5239"/>' for x in range(0, w, 40)]
+        return "".join(parts)
+    # classroom (기본)
+    parts = [f'<rect width="{w}" height="{h}" fill="#ffecd0"/>',
+             f'<rect x="{w * 0.18:.0f}" y="24" width="{w * 0.64:.0f}" height="110" fill="#2e5a46" stroke="#7a5230" stroke-width="7"/>',
+             f'<text x="{w / 2:.0f}" y="88" text-anchor="middle" font-size="22" fill="#f0f0e6" '
+             f'font-family="Galmuri11, sans-serif">오늘도 열공!</text>',
+             f'<rect x="{w * 0.18:.0f}" y="134" width="{w * 0.64:.0f}" height="6" fill="#7a5230"/>',
+             f'<rect y="{f - 10}" width="{w}" height="10" fill="#c99566"/>',
+             f'<rect y="{f}" width="{w}" height="{h - f}" fill="#d6aa78"/>']
+    parts += [f'<rect x="{x}" y="{f}" width="2" height="{h - f}" fill="#c4966a"/>' for x in range(0, w, 30)]
+    return "".join(parts)
+
+
+def _label_width(text: str, size: int = 11) -> float:
+    return sum(size if ord(ch) > 0x1100 else size * 0.6 for ch in text) + 12
+
+
+def plaza_svg(rows, me_nickname: str, bg_kind: str, bg_image: str) -> str:
+    """rows = [{player_id, nickname, total_minutes, equipped}] → 광장 SVG"""
+    n = len(rows)
+    # 등수: 승인된 시간이 많은 순 (같은 시간이면 같은 등수, 0분은 등수 없음 🌱)
+    ranked = sorted(rows, key=lambda r: -int(r["total_minutes"]))
+    rank_of, prev, rank = {}, None, 0
+    for i, r in enumerate(ranked, start=1):
+        if r["total_minutes"] != prev:
+            rank, prev = i, r["total_minutes"]
+        rank_of[r["player_id"]] = rank if r["total_minutes"] > 0 else None
+
+    # 자리: 학생마다 고정된 '무작위' 칸 (새로고침해도 같은 자리)
+    def h(pid, salt=""):
+        return int(hashlib.sha256((str(pid) + salt).encode()).hexdigest(), 16)
+    order = sorted(rows, key=lambda r: h(r["player_id"]))
+    cols = max(1, min(PLAZA_COLS, n))
+    nrows = max(1, -(-n // cols))
+    W = PLAZA_W
+    H = PLAZA_FLOOR + nrows * PLAZA_ROW_H + 20
+    cell_w = W / cols
+    cw, ch = 16 * CHAR_SCALE, len(BASE_SPRITE) * CHAR_SCALE
+    placed = []
+    for idx, r in enumerate(order):
+        row_i, col_i = divmod(idx, cols)
+        jx = (h(r["player_id"], "x") % 1000 / 1000 - 0.5) * cell_w * 0.22   # 좌우로 살짝만 흩어지게 (이름표 겹침 방지)
+        jy = (h(r["player_id"], "y") % 1000 / 1000 - 0.5) * 24
+        cx = cell_w * (col_i + 0.5) + jx
+        top = PLAZA_FLOOR + row_i * PLAZA_ROW_H + 4 + jy
+        placed.append((top, cx, r))
+
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H:.0f}" width="100%" '
+           f'role="img" aria-label="우리 반 광장" style="display:block;border-radius:6px">',
+           plaza_bg_svg(bg_kind, bg_image, W, int(H))]
+    for top, cx, r in sorted(placed, key=lambda t: t[0]):          # 뒤에 있는 사람부터 그림
+        x0 = cx - cw / 2
+        rk = rank_of[r["player_id"]]
+        out.append(f'<ellipse cx="{cx:.1f}" cy="{top + ch:.1f}" rx="{cw * 0.42:.1f}" ry="5" fill="#000" opacity=".18"/>')
+        out.append(f'<g transform="translate({x0:.1f},{top:.1f}) scale({CHAR_SCALE})" shape-rendering="crispEdges">'
+                   + layers_rects(equipped_layers(r["equipped"] or {})) + "</g>")
+        if rk in RANK_COLORS:                                        # 1~3등 작은 왕관
+            fill, dark = RANK_COLORS[rk]
+            kx, ky = cx - 9, top - 13          # 모자·왕관 아이템과 안 겹치게 머리 위로 띄움
+            crown = ["x.x.x", "xxxxx", "xjxjx"]
+            for yy, line in enumerate(crown):
+                for xx, c in enumerate(line):
+                    if c != ".":
+                        col = "#e63946" if c == "j" else fill
+                        out.append(f'<rect x="{kx + xx * 3.6:.1f}" y="{ky + yy * 3.6:.1f}" width="3.6" height="3.6" fill="{col}"/>')
+        text = (f"{rk}등 " if rk else "🌱 ") + r["nickname"]
+        lw = _label_width(text)
+        ly = top + ch + 3
+        is_me = r["nickname"] == me_nickname
+        if rk in RANK_COLORS:
+            fill, stroke, sw = RANK_COLORS[rk][0], RANK_COLORS[rk][1], 1.5
+        else:
+            fill, stroke, sw = "#ffffff", "#2b2140", 1
+        if is_me:
+            stroke, sw = "#7c5cff", 2.5
+        out.append(f'<rect x="{cx - lw / 2:.1f}" y="{ly:.1f}" width="{lw:.1f}" height="17" rx="4" '
+                   f'fill="{fill}" stroke="{stroke}" stroke-width="{sw}"/>')
+        out.append(f'<text x="{cx:.1f}" y="{ly + 12.5:.1f}" text-anchor="middle" font-size="11" fill="#2b2140" '
+                   f'font-family="Galmuri11, sans-serif" font-weight="700">{esc(text)}</text>')
+    out.append("</svg>")
+    return "".join(out)
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def cached_plaza():
+    return rpc("plaza_data") or [], rpc("get_plaza_bg") or {}
+
+
+def image_to_data_uri(data: bytes):
+    """관리자가 올린 배경 그림 → 크기 줄이고 data URI 로 (DB에 저장하기 위해)"""
+    import base64
+    from io import BytesIO
+    from PIL import Image
+    try:
+        img = Image.open(BytesIO(data))
+        img.load()
+    except Exception:
+        return None, "그림 파일을 열 수 없어요. PNG/JPG 파일인지 확인해 주세요."
+    img.thumbnail((1080, 1080))
+    has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
+    buf = BytesIO()
+    if has_alpha:
+        img.convert("RGBA").save(buf, format="PNG", optimize=True)
+        mime = "png"
+    else:
+        img.convert("RGB").save(buf, format="JPEG", quality=85)
+        mime = "jpeg"
+    if len(buf.getvalue()) > 1_400_000:          # 그래도 크면 JPEG 로 더 줄이기
+        buf = BytesIO()
+        img.convert("RGB").save(buf, format="JPEG", quality=70)
+        mime = "jpeg"
+    uri = f"data:image/{mime};base64," + base64.b64encode(buf.getvalue()).decode()
+    if len(uri) > 2_000_000:
+        return None, "그림이 너무 커요. 더 작은 그림으로 올려 주세요."
+    return uri, None
 
 
 # ════════════════════════════════════════════════════════════════
@@ -633,7 +801,7 @@ def student_app():
     page_header(f"{nickname} 님, 오늘도 한 칸씩 레벨 업!")
     show_flash()
 
-    tabs = st.tabs(["🏠 홈", "✏️ 인증", "🧍 캐릭터", "🛍️ 상점", "🏅 순위", "🤝 퀘스트"])
+    tabs = st.tabs(["🏠 홈", "✏️ 인증", "🧍 캐릭터", "🛍️ 상점", "🏫 광장", "🏅 순위", "🤝 퀘스트"])
     with tabs[0]:
         home_tab(player_id, nickname, coins, owned, equipped, submissions)
     with tabs[1]:
@@ -643,8 +811,10 @@ def student_app():
     with tabs[3]:
         shop_tab(player_id, coins, owned, equipped)
     with tabs[4]:
-        ranking_tab(nickname)
+        plaza_tab(nickname)
     with tabs[5]:
+        ranking_tab(nickname)
+    with tabs[6]:
         quest_tab()
 
     st.divider()
@@ -805,6 +975,7 @@ def character_tab(player_id, nickname, owned, equipped):
             if not res.get("ok"):
                 st.error("가지고 있지 않은 아이템은 착용할 수 없어.")
                 return
+        cached_plaza.clear()
         flash("success", "👕 착용 상태를 저장했어!")
         st.rerun()
 
@@ -912,6 +1083,22 @@ def buy_item(player_id, item):
         st.error(f"코인이 부족해. (현재 🪙 {res.get('balance', 0)})")
     else:
         st.error("구매하지 못했어. 다시 로그인해 줘.")
+
+
+def plaza_tab(my_nickname):
+    st.markdown("#### 🏫 우리 반 광장")
+    try:
+        rows, bg = cached_plaza()
+    except DBError:
+        st.error("⚠️ 광장을 불러오지 못했어. 잠시 후 다시 시도해 줘.")
+        return
+    if not rows:
+        st.info("아직 아무도 없어.")
+        return
+    st.markdown(f"<div class='px-card' style='padding:6px'>{plaza_svg(rows, my_nickname, bg.get('kind', 'classroom'), bg.get('image'))}</div>",
+                unsafe_allow_html=True)
+    st.caption(f"친구 {len(rows)}명 · 이름표의 등수는 승인된 공부 시간 순위야 (🌱 = 아직 승인된 기록 없음). "
+               f"보라색 테두리가 나야! 옷을 바꾸면 최대 30초 뒤에 반영돼.")
 
 
 def ranking_tab(my_nickname):
@@ -1077,6 +1264,7 @@ def handle_review_result(res, ok_msg):
         flash("error", f"처리하지 못했어요: {res.get('code')}")
     cached_leaderboard.clear()
     cached_class_progress.clear()
+    cached_plaza.clear()
     st.rerun()
 
 
@@ -1217,6 +1405,48 @@ def admin_items():
 
 
 def admin_settings():
+    st.markdown("#### 🏫 광장 배경")
+    try:
+        rows, bg = cached_plaza()
+    except DBError:
+        rows, bg = [], {}
+    cur = bg.get("kind", "classroom")
+    kinds = list(PLAZA_BACKGROUNDS)
+    pick = st.radio("배경 고르기", kinds, index=kinds.index(cur) if cur in kinds else 0,
+                    format_func=lambda k: PLAZA_BACKGROUNDS[k] + (" (지금)" if k == cur else ""),
+                    horizontal=True, key="bg_pick")
+    new_uri = None
+    if pick == "custom":
+        st.caption("추천: 가로 540 × 세로 740 그림, 위에서 215 지점(약 30%)부터 아래는 바닥. "
+                   "광장 크기가 인원수에 따라 달라서 가장자리가 조금 잘릴 수 있어요.")
+        up = st.file_uploader("배경 그림 올리기 (PNG/JPG)",
+                              type=["png", "jpg", "jpeg"], key="bg_file")
+        if up is not None:
+            if up.size > 8 * 1024 * 1024:
+                st.error("파일이 너무 커요 (8MB 이하).")
+            else:
+                new_uri, err = image_to_data_uri(up.getvalue())
+                if err:
+                    st.error(err)
+        elif not bg.get("image"):
+            st.caption("아직 올린 그림이 없어요. 그림을 올려 주세요.")
+    preview_img = new_uri or bg.get("image")
+    sample = rows or [{"player_id": "sample", "nickname": "예시", "total_minutes": 0, "equipped": {}}]
+    st.markdown(f"<div class='px-card' style='padding:6px'>{plaza_svg(sample, '', pick, preview_img)}</div>",
+                unsafe_allow_html=True)
+    st.caption("미리보기예요. [배경 저장]을 눌러야 학생 화면에 적용돼요.")
+    can_save = pick != "custom" or bool(new_uri or bg.get("image"))
+    if st.button("배경 저장", type="primary", disabled=not can_save, key="bg_save"):
+        res = safe_rpc("set_plaza_bg", p_kind=pick, p_image=new_uri if pick == "custom" else None)
+        if res is not None:
+            if res.get("ok"):
+                cached_plaza.clear()
+                flash("success", f"광장 배경을 '{PLAZA_BACKGROUNDS[pick]}' 로 바꿨어요.")
+                st.rerun()
+            st.error({"bad_image": "그림 형식이 올바르지 않아요.", "no_image": "먼저 그림을 올려 주세요."}
+                     .get(res.get("code"), f"저장 실패: {res.get('code')}"))
+    st.divider()
+
     prog = safe_rpc("class_progress") or {}
     goal = int(prog.get("goal_hours", 300))
     st.markdown(f"**반 공동 목표:** {goal}시간 · 현재 {fmt_minutes(prog.get('total_minutes', 0))}")
