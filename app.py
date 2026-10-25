@@ -43,17 +43,26 @@ REWARD_RULES = {
 MAX_DAILY_MINUTES = 16 * 60      # 하루 최대 16시간
 SUBMIT_WINDOW_DAYS = 3           # 오늘 포함 최근 3일까지 제출 가능
 
-# 상점 아이템 (id 는 영어 소문자/숫자/_ 만, 한 번 정하면 바꾸지 않기)
-CATEGORIES = ["모자", "얼굴", "옷", "장식"]
+# 상점 기본 아이템 (id 는 영어 소문자/숫자/_ 만, 한 번 정하면 바꾸지 않기)
+# ※ 학생들이 그린 아이템은 여기가 아니라 관리자 화면 [🎨 아이템 등록] 에서 추가한다.
+CATEGORIES = ["머리", "모자", "얼굴", "볼", "옷", "장식"]   # 같은 부위는 하나만 착용
+RARITIES = ["일반", "희귀", "에픽"]
 ITEMS = [
-    {"id": "cap_blue", "name": "파란 모자",   "category": "모자", "price": 30,  "rarity": "일반"},
-    {"id": "glasses",  "name": "동그란 안경", "category": "얼굴", "price": 40,  "rarity": "일반"},
-    {"id": "hoodie",   "name": "민트 후드",   "category": "옷",   "price": 60,  "rarity": "희귀"},
-    {"id": "star",     "name": "반짝 별",     "category": "장식", "price": 80,  "rarity": "희귀"},
-    {"id": "crown",    "name": "픽셀 왕관",   "category": "모자", "price": 150, "rarity": "에픽"},
-    {"id": "book",     "name": "공부 책",     "category": "장식", "price": 25,  "rarity": "일반"},
+    {"id": "cap_blue",   "name": "파란 모자",        "category": "모자", "price": 30,  "rarity": "일반"},
+    {"id": "glasses",    "name": "동그란 안경",      "category": "얼굴", "price": 40,  "rarity": "일반"},
+    {"id": "hoodie",     "name": "민트 후드",        "category": "옷",   "price": 60,  "rarity": "희귀"},
+    {"id": "star",       "name": "반짝 별",          "category": "장식", "price": 80,  "rarity": "희귀"},
+    {"id": "crown",      "name": "픽셀 왕관",        "category": "모자", "price": 150, "rarity": "에픽"},
+    {"id": "book",       "name": "공부 책",          "category": "장식", "price": 25,  "rarity": "일반"},
+    {"id": "blush_pink", "name": "발그레 볼터치",    "category": "볼",   "price": 20,  "rarity": "일반"},
+    {"id": "dress_pink", "name": "핑크 원피스",      "category": "옷",   "price": 50,  "rarity": "희귀"},
+    {"id": "hair_long",  "name": "핀 꽂은 긴 머리",  "category": "머리", "price": 70,  "rarity": "희귀"},
 ]
-ITEM_BY_ID = {item["id"]: item for item in ITEMS}
+BUILTIN_BY_ID = {item["id"]: item for item in ITEMS}
+
+# 디자인 등록권: 학생이 사서 그림을 보내면, 관리자가 [🎨 아이템 등록] 에서 상점에 올림
+DESIGN_TICKET_PRICE = 50     # 등록권 가격 (코인)
+MAX_UNUSED_TICKETS = 3       # 아직 안 쓴 등록권은 최대 몇 장까지 가지고 있을 수 있는지
 
 # 계정 보안
 PIN_ITERATIONS = 600_000     # PIN 해시 반복 횟수 (OWASP 권장: PBKDF2-SHA256 60만 회)
@@ -188,6 +197,8 @@ PALETTE = {
     "t": "#6c8cff", "p": "#3d3a5c", "b": "#1e1b2e", "c": "#3b82f6", "w": "#ffffff",
     "y": "#ffc93c", "j": "#e63946", "g": "#2b2140", "k": "#7ee0c3", "K": "#4fb894",
     "n": "#8b5a2b", "u": "#cfe8ff",
+    # 학생 디자인 (볼터치/원피스/긴 머리)
+    "P": "#ff6bfa", "L": "#faadff", "Y": "#ffff00", "R": "#ff0055",
 }
 
 BASE_SPRITE = [
@@ -255,29 +266,182 @@ ITEM_SPRITES = {
         15: "nwn.............",
         16: "nnn.............",
     },
+    "blush_pink": {
+        9: "...rrr....rrr...",
+    },
+    "dress_pink": {
+        12: "....PPPssPPP....",
+        13: "...PPPPYYPPPP...",
+        14: "...PPPPPPPPPP...",
+        15: "....PPPPPPPP....",
+        16: "...LLLLLLLLLL...",
+        17: "...LLLLLLLLLL...",
+    },
+    "hair_long": {
+        2: "......hhhh......",
+        3: "....hhhhhhhh....",
+        4: "...hhhhhhhhhh...",
+        5: "...hhhhhhhhhh...",
+        6: "...hhhhhhhhhh...",
+        7: "...hh......hh...",
+        8: "..hR........h...",
+        9: "..hh........h...",
+        10: "..hh............",
+        11: "..hh............",
+        12: "..hh............",
+        13: "..h.............",
+    },
 }
 
-# 겹쳐 그리는 순서 (뒤쪽 → 앞쪽)
-LAYER_ORDER = ["옷", "얼굴", "모자", "장식"]
+# 겹쳐 그리는 순서 (뒤쪽 → 앞쪽): 모자가 머리 위, 안경이 머리카락 위에 오도록
+LAYER_ORDER = ["옷", "머리", "볼", "얼굴", "모자", "장식"]
+HEX_RE = re.compile(r"#[0-9a-f]{6}")
 
 
-def avatar_svg(equipped: dict, px: int = 10) -> str:
-    grid = [list(row) for row in BASE_SPRITE]
-    for category in LAYER_ORDER:
-        item_id = equipped.get(category)
-        for row_idx, row in ITEM_SPRITES.get(item_id, {}).items():
-            for col_idx, ch in enumerate(row):
-                if ch != ".":
-                    grid[row_idx][col_idx] = ch
+def builtin_grid(item_id: str):
+    """기본 아이템 글자 그림 → 19x16 색 격자 (#rrggbb 또는 None)"""
+    grid = [[None] * 16 for _ in range(len(BASE_SPRITE))]
+    for row_idx, row in ITEM_SPRITES.get(item_id, {}).items():
+        for col_idx, ch in enumerate(row):
+            if ch in PALETTE:
+                grid[row_idx][col_idx] = PALETTE[ch]
+    return grid
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def load_custom_items():
+    """학생 디자인 아이템 (숨긴 것 포함). DB 오류 시 빈 목록."""
+    try:
+        rows = rpc("custom_items_list", p_include_inactive=True) or []
+    except DBError:
+        return []
+    return [{"id": r["id"], "name": r["name"], "category": r["category"], "price": int(r["price"]),
+             "rarity": r["rarity"], "creator": r["creator"], "active": bool(r["active"]),
+             "owners": r.get("owners", 0), "sprite": r["sprite"], "custom": True} for r in rows]
+
+
+def catalog(include_hidden: bool = False):
+    """상점 전체 목록 = 기본 아이템 + 학생 디자인 아이템"""
+    items = [dict(i, custom=False, active=True, creator=None) for i in ITEMS]
+    items += [c for c in load_custom_items() if include_hidden or c["active"]]
+    return items
+
+
+def item_info(item_id: str):
+    if item_id in BUILTIN_BY_ID:
+        return BUILTIN_BY_ID[item_id]
+    return next((c for c in load_custom_items() if c["id"] == item_id), None)
+
+
+def item_grid(item_id: str):
+    if item_id in BUILTIN_BY_ID:
+        return builtin_grid(item_id)
+    info = item_info(item_id)
+    return info["sprite"] if info else None
+
+
+def svg_from_layers(layers, px: int = 10, with_base: bool = True) -> str:
+    """색 격자 여러 장을 순서대로 겹쳐 SVG 그림으로 만든다."""
+    h = len(BASE_SPRITE)
+    grid = [[PALETTE.get(ch) for ch in row] for row in BASE_SPRITE] if with_base else [[None] * 16 for _ in range(h)]
+    for layer in layers:
+        if not layer:
+            continue
+        for y, row in enumerate(layer[:h]):
+            for x, color in enumerate(row[:16]):
+                if color:
+                    grid[y][x] = color
     rects = []
     for y, row in enumerate(grid):
-        for x, ch in enumerate(row):
-            if ch in PALETTE:
-                rects.append(f'<rect x="{x}" y="{y}" width="1" height="1" fill="{PALETTE[ch]}"/>')
-    w, h = 16, len(grid)
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w * px}" '
+        for x, color in enumerate(row):
+            if color and HEX_RE.fullmatch(str(color).lower()):   # 이상한 값은 그리지 않음 (보안)
+                rects.append(f'<rect x="{x}" y="{y}" width="1" height="1" fill="{color}"/>')
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 {h}" width="{16 * px}" '
             f'height="{h * px}" shape-rendering="crispEdges" role="img" aria-label="픽셀 캐릭터">'
             + "".join(rects) + "</svg>")
+
+
+def avatar_svg(equipped: dict, px: int = 10, extra: dict = None) -> str:
+    """equipped = {부위: 아이템id}. extra = {부위: 색 격자} (등록 전 미리보기용)"""
+    layers = []
+    for category in LAYER_ORDER:
+        if extra and category in extra:
+            layers.append(extra[category])
+        elif equipped.get(category):
+            layers.append(item_grid(equipped[category]))
+    return svg_from_layers(layers, px)
+
+
+def png_to_grid(data: bytes, white_is_empty: bool = True, remove_base: bool = False):
+    """학생이 그린 PNG → 19x16 색 격자. (격자, 안내 메시지 목록) 을 돌려준다. 실패하면 격자=None"""
+    from io import BytesIO
+    from PIL import Image  # Streamlit 에 포함된 패키지
+
+    try:
+        img = Image.open(BytesIO(data))
+        img.load()
+    except Exception:
+        return None, ["그림 파일을 열 수 없어요. PNG/JPG 파일인지 확인해 주세요."]
+    w, h = img.size
+    if w < 16 or h < 19 or w * h > 4000 * 4000:
+        return None, [f"그림 크기가 이상해요 ({w}×{h}). 도안(320×380)에 그려 주세요."]
+    ratio = (w / 16) / (h / 19)
+    if abs(ratio - 1) > 0.06:
+        return None, [f"가로:세로 비율이 16:19 가 아니에요 ({w}×{h}). 도안 크기 그대로 저장해 주세요."]
+    img = img.convert("RGBA")
+    cw, ch = w / 16, h / 19
+    base = [[PALETTE.get(c) for c in row] for row in BASE_SPRITE]
+    grid, notes = [], []
+    for y in range(19):
+        row = []
+        for x in range(16):
+            # 칸 가운데 60% 영역에서 가장 많이 쓰인 색을 고름 (경계선 번짐 무시)
+            x0, x1 = int(x * cw + cw * 0.2), max(int(x * cw + cw * 0.8), int(x * cw + cw * 0.2) + 1)
+            y0, y1 = int(y * ch + ch * 0.2), max(int(y * ch + ch * 0.8), int(y * ch + ch * 0.2) + 1)
+            step = max(1, int(min(cw, ch) // 8))
+            counts = {}
+            for yy in range(y0, y1, step):
+                for xx in range(x0, x1, step):
+                    r, g, b, a = img.getpixel((xx, yy))
+                    if a < 128 or (white_is_empty and min(r, g, b) > 238):
+                        key = None
+                    else:
+                        key = f"#{r:02x}{g:02x}{b:02x}"
+                    counts[key] = counts.get(key, 0) + 1
+            total = sum(counts.values())
+            empty = counts.pop(None, 0)
+            color = max(counts, key=counts.get) if counts and empty * 2 < total else None
+            if color and remove_base and base[y][x]:
+                br, bg, bb = (int(base[y][x][i:i + 2], 16) for i in (1, 3, 5))
+                cr, cg, cb = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+                if abs(br - cr) + abs(bg - cg) + abs(bb - cb) < 30:
+                    color = None
+            row.append(color)
+        grid.append(row)
+    filled = sum(1 for r in grid for c in r if c)
+    if filled == 0:
+        return None, ["칠해진 칸이 하나도 없어요. 배경만 있는 그림인지 확인해 주세요."]
+    notes.append(f"칠해진 칸 {filled}개 · 사용한 색 {len({c for r in grid for c in r if c})}가지")
+    if filled > 150:
+        notes.append("칠해진 칸이 아주 많아요. 기본 캐릭터까지 같이 저장된 그림이면 "
+                     "'기본 캐릭터 부분 지우기'를 켜 보세요.")
+    return grid, notes
+
+
+@st.cache_data(show_spinner=False)
+def template_png() -> bytes:
+    """학생용 도안: 기본 캐릭터가 그려진 320x380 투명 PNG"""
+    from io import BytesIO
+    from PIL import Image
+    img = Image.new("RGBA", (16, len(BASE_SPRITE)), (0, 0, 0, 0))
+    for y, row in enumerate(BASE_SPRITE):
+        for x, c in enumerate(row):
+            if c in PALETTE:
+                hx = PALETTE[c]
+                img.putpixel((x, y), (int(hx[1:3], 16), int(hx[3:5], 16), int(hx[5:7], 16), 255))
+    buf = BytesIO()
+    img.resize((320, 380), Image.NEAREST).save(buf, format="PNG")
+    return buf.getvalue()
 
 
 # ════════════════════════════════════════════════════════════════
@@ -507,7 +671,7 @@ def home_tab(player_id, nickname, coins, owned, equipped, submissions):
   <div>
     <div class="px-stat">{esc(nickname)}</div>
     <div class="px-label">보유 코인</div><div class="px-stat">🪙 {int(coins)}</div>
-    <div class="px-label" style="margin-top:6px">보유 아이템 {len(owned)} / {len(ITEMS)}</div>
+    <div class="px-label" style="margin-top:6px">보유 아이템 {len(owned)} / {len(catalog())}</div>
   </div>
 </div></div>
 <div class="px-card gold"><b class="px-font">📅 오늘의 인증</b><br/>{today_html}</div>
@@ -613,11 +777,12 @@ def character_tab(player_id, nickname, owned, equipped):
 
     selection = {}
     for category in CATEGORIES:
-        choices = [NONE] + [i["id"] for i in ITEMS if i["category"] == category and i["id"] in owned]
+        choices = [NONE] + [i["id"] for i in catalog(include_hidden=True)
+                            if i["category"] == category and i["id"] in owned]
         current = equipped.get(category) if equipped.get(category) in choices else NONE
         picked = st.selectbox(
             category, choices, index=choices.index(current),
-            format_func=lambda x: "착용 안 함" if x == NONE else ITEM_BY_ID[x]["name"],
+            format_func=lambda x: "착용 안 함" if x == NONE else (item_info(x) or {"name": x})["name"],
             key=f"equip_{category}", disabled=len(choices) == 1,
         )
         selection[category] = None if picked == NONE else picked
@@ -647,17 +812,23 @@ def character_tab(player_id, nickname, owned, equipped):
 def shop_tab(player_id, coins, owned, equipped):
     st.markdown(f"#### 🛍️ 아이템 상점 · 내 코인 🪙 {int(coins)}")
     st.caption("아이템은 한 번만 살 수 있고, 산 뒤에는 🧍 캐릭터 탭에서 착용해.")
+    design_ticket_box(player_id, coins)
+
+    items = catalog()
     cols = st.columns(2)
-    for idx, item in enumerate(ITEMS):
+    for idx, item in enumerate(items):
         with cols[idx % 2]:
             with st.container(border=True):
                 preview = dict(equipped)
                 preview[item["category"]] = item["id"]
+                maker = (f"<div class='px-label'>🎨 만든 사람: {esc(item['creator'])}</div>"
+                         if item.get("creator") else
+                         ("<div class='px-label'>🎨 학생 디자인</div>" if item.get("custom") else ""))
                 st.markdown(
                     f"<div style='text-align:center'><div class='px-avatar'>{avatar_svg(preview, 5)}</div>"
                     f"<div class='px-font' style='margin-top:6px'>{esc(item['name'])}</div>"
                     f"<span class='px-badge'>{esc(item['category'])}</span>"
-                    f"<span class='px-badge'>{esc(item['rarity'])}</span>"
+                    f"<span class='px-badge'>{esc(item['rarity'])}</span>{maker}"
                     f"<div class='px-stat'>🪙 {item['price']}</div></div>",
                     unsafe_allow_html=True,
                 )
@@ -670,6 +841,61 @@ def shop_tab(player_id, coins, owned, equipped):
                     buy_item(player_id, item)
 
 
+TICKET_STATUS = {"unused": "⏳ 그림 기다리는 중", "used": "✅ 등록 완료", "refunded": "↩️ 환불됨"}
+
+
+def design_ticket_box(player_id, coins):
+    """디자인 등록권 카드 (구매는 확인 버튼을 한 번 더 눌러야 진행)"""
+    tickets = safe_rpc("my_tickets", p_player_id=player_id) or []
+    unused = sum(1 for t in tickets if t["status"] == "unused")
+    with st.container(border=True):
+        st.markdown(
+            f"<div class='px-font' style='font-size:1.05rem'>🎨 디자인 등록권 · 🪙 {DESIGN_TICKET_PRICE}</div>"
+            f"<div style='margin:6px 0'>내가 그린 옷을 상점에 올릴 수 있어! "
+            f"등록되면 <b>내 옷은 무료로 받고</b>, 친구들이 코인으로 살 수 있어.</div>"
+            f"<div class='px-label'>① 등록권 사기 → ② 도안 받아서 그리기 → ③ 관리자에게 그림 보내기 "
+            f"(아이템 이름·부위·원하는 가격도 같이) → ④ 관리자가 등록</div>",
+            unsafe_allow_html=True,
+        )
+        c1, c2 = st.columns(2)
+        c1.download_button("📥 도안 받기", data=template_png(), file_name="옷그리기_도안_320x380.png",
+                           mime="image/png", use_container_width=True, key="dl_template")
+        confirm_key = "ticket_confirm"
+        if unused >= MAX_UNUSED_TICKETS:
+            c2.button(f"안 쓴 등록권 {unused}장 보유 중", disabled=True, use_container_width=True, key="t_max")
+        elif coins < DESIGN_TICKET_PRICE:
+            c2.button(f"🪙 {DESIGN_TICKET_PRICE - coins} 부족", disabled=True, use_container_width=True, key="t_poor")
+        elif not st.session_state.get(confirm_key):
+            if c2.button("등록권 사기", type="primary", use_container_width=True, key="t_buy"):
+                st.session_state[confirm_key] = True
+                st.rerun()
+        else:
+            c2.warning(f"🪙 {DESIGN_TICKET_PRICE} 을 써서 등록권을 살까?")
+            y, n = st.columns(2)
+            if y.button("✅ 살게", type="primary", use_container_width=True, key="t_yes"):
+                st.session_state[confirm_key] = False
+                res = safe_rpc("buy_design_ticket", p_player_id=player_id, p_price=DESIGN_TICKET_PRICE,
+                               p_max_unused=MAX_UNUSED_TICKETS)
+                if res is not None:
+                    if res.get("ok"):
+                        flash("success", f"🎨 디자인 등록권 #{res['ticket_id']} 구매 완료! 도안에 그려서 관리자에게 보내 줘.")
+                        st.rerun()
+                    st.error({"not_enough": "코인이 부족해.",
+                              "too_many_unused": f"안 쓴 등록권은 {MAX_UNUSED_TICKETS}장까지만 가질 수 있어."
+                              }.get(res.get("code"), "구매하지 못했어. 다시 시도해 줘."))
+            if n.button("취소", use_container_width=True, key="t_no"):
+                st.session_state[confirm_key] = False
+                st.rerun()
+        if tickets:
+            with st.expander(f"내 등록권 {len(tickets)}장 (안 쓴 것 {unused}장)"):
+                for t in tickets:
+                    extra = f" · {esc(t['item_name'])}" if t.get("item_name") else ""
+                    note = f" · 사유: {esc(t['note'])}" if t.get("note") and t["status"] == "refunded" else ""
+                    st.markdown(f"#{t['id']} · {TICKET_STATUS.get(t['status'], t['status'])}{extra}{note} "
+                                f"<span class='px-label'>({to_kst(t['bought_at'])[:10]})</span>",
+                                unsafe_allow_html=True)
+
+
 def buy_item(player_id, item):
     res = safe_rpc("purchase_item", p_player_id=player_id, p_item_id=item["id"],
                    p_item_name=item["name"], p_price=item["price"])
@@ -680,6 +906,8 @@ def buy_item(player_id, item):
         st.rerun()
     elif res.get("code") == "already_owned":
         st.warning("이미 가지고 있는 아이템이야.")
+    elif res.get("code") == "not_available":
+        st.warning("지금은 판매하지 않는 아이템이야.")
     elif res.get("code") == "not_enough":
         st.error(f"코인이 부족해. (현재 🪙 {res.get('balance', 0)})")
     else:
@@ -778,11 +1006,13 @@ def admin_page():
     pending = safe_rpc("pending_submissions")
     if pending is None:
         return
-    t1, t2, t3 = st.tabs([f"📋 검토 대기 ({len(pending)})", "🗂️ 처리 내역", "⚙️ 반 설정·현황"])
+    t1, t2, t4, t3 = st.tabs([f"📋 검토 대기 ({len(pending)})", "🗂️ 처리 내역", "🎨 아이템 등록", "⚙️ 반 설정·현황"])
     with t1:
         admin_review(pending)
     with t2:
         admin_history()
+    with t4:
+        admin_items()
     with t3:
         admin_settings()
 
@@ -863,6 +1093,127 @@ def admin_history():
         "결과": STATUS_LABEL.get(r["status"], r["status"]),
         "지급 코인": r["coins"], "반려 사유": r["reject_reason"] or "",
     } for r in rows]), hide_index=True, use_container_width=True)
+
+
+def admin_items():
+    """학생 디자인 등록: 등록권 확인 → 그림 올리기 → 미리보기 → 등록"""
+    tickets = safe_rpc("ticket_list", p_limit=200)
+    if tickets is None:
+        return
+    open_tickets = [t for t in tickets if t["status"] == "unused"]
+
+    st.markdown(f"#### 🎟️ 그림을 기다리는 등록권 ({len(open_tickets)})")
+    if not open_tickets:
+        st.caption("지금은 기다리는 등록권이 없어요.")
+    for t in open_tickets:
+        with st.expander(f"#{t['id']} · {t['nickname']} · {to_kst(t['bought_at'])[:16]} · 🪙{t['price_paid']}"):
+            st.caption("그림이 부적절하거나 등록하지 않을 때만 환불하세요. 환불하면 코인이 학생에게 돌아가요.")
+            reason = st.text_input("환불 사유 (학생에게 보여요)", key=f"rf_reason_{t['id']}", max_chars=200)
+            if st.button("↩️ 환불", key=f"rf_{t['id']}"):
+                if not reason.strip():
+                    st.error("환불 사유를 적어 주세요.")
+                else:
+                    res = safe_rpc("refund_ticket", p_ticket_id=t["id"], p_reason=reason.strip())
+                    if res is not None:
+                        flash("success" if res.get("ok") else "warning",
+                              f"#{t['id']} 환불 완료 (🪙 {res.get('refunded', 0)})" if res.get("ok")
+                              else "이미 처리된 등록권이에요.")
+                        st.rerun()
+
+    st.divider()
+    st.markdown("#### ➕ 새 아이템 등록")
+    st.caption("학생이 도안(320×380)에 그린 그림을 올리면 자동으로 도트(16×19칸)로 바뀌어요. "
+               "미리보기를 확인하고 등록하면 바로 상점에 올라가요.")
+    st.session_state.setdefault("reg_nonce", 0)
+    up = st.file_uploader("그림 파일 (PNG 추천)", type=["png", "jpg", "jpeg"], key=f"reg_file_{st.session_state.reg_nonce}")
+    c1, c2 = st.columns(2)
+    white_empty = c1.checkbox("흰색 = 배경(투명)으로 처리", value=True, key="reg_white",
+                              help="흰 배경에 그린 그림이면 켜 두세요. 흰색 옷을 그렸다면 끄세요.")
+    remove_base = c2.checkbox("기본 캐릭터 부분 지우기", value=False, key="reg_rmbase",
+                              help="학생이 밑그림(기본 캐릭터)까지 같이 저장한 경우에만 켜세요.")
+
+    grid = None
+    if up is not None:
+        if up.size > 5 * 1024 * 1024:
+            st.error("파일이 너무 커요 (5MB 이하).")
+        else:
+            grid, notes = png_to_grid(up.getvalue(), white_is_empty=white_empty, remove_base=remove_base)
+            for n in notes:
+                (st.caption if grid else st.error)(n)
+
+    name = st.text_input("아이템 이름 (1~20자)", key="reg_name", max_chars=20)
+    c3, c4, c5 = st.columns(3)
+    category = c3.selectbox("부위", CATEGORIES, key="reg_cat",
+                            help="같은 부위 아이템은 하나만 착용할 수 있어요.")
+    price = c4.number_input("가격 (코인)", min_value=1, max_value=1000, value=50, step=5, key="reg_price")
+    rarity = c5.selectbox("등급", RARITIES, key="reg_rarity")
+
+    ticket_opts = [None] + [t["id"] for t in open_tickets]
+    ticket_label = {t["id"]: f"#{t['id']} · {t['nickname']}" for t in open_tickets}
+    ticket_id = st.selectbox("사용할 등록권 (만든 학생에게 무료 지급)", ticket_opts,
+                             format_func=lambda x: "없음 (관리자 직접 등록)" if x is None else ticket_label[x],
+                             key="reg_ticket")
+    creator_id = None
+    if ticket_id is None:
+        players = safe_rpc("player_list") or []
+        p_opts = [None] + [p["id"] for p in players]
+        p_label = {p["id"]: p["nickname"] for p in players}
+        creator_id = st.selectbox("만든 사람 (선택)", p_opts,
+                                  format_func=lambda x: "표시 안 함" if x is None else p_label[x], key="reg_creator")
+
+    if grid:
+        a, b = st.columns(2)
+        a.markdown(f"<div style='text-align:center'><div class='px-avatar'>{svg_from_layers([grid], 8, with_base=False)}</div>"
+                   f"<div class='px-label'>아이템만</div></div>", unsafe_allow_html=True)
+        b.markdown(f"<div style='text-align:center'><div class='px-avatar'>{avatar_svg({}, 8, extra={category: grid})}</div>"
+                   f"<div class='px-label'>캐릭터에 입힌 모습 ({esc(category)})</div></div>", unsafe_allow_html=True)
+
+    ready = bool(grid) and bool(name.strip())
+    if st.button("🎨 상점에 등록", type="primary", use_container_width=True, disabled=not ready, key="reg_go"):
+        res = safe_rpc("register_custom_item", p_name=name.strip(), p_category=category, p_price=int(price),
+                       p_rarity=rarity, p_sprite=grid, p_ticket_id=ticket_id, p_creator_id=creator_id)
+        if res is not None:
+            if res.get("ok"):
+                load_custom_items.clear()
+                st.session_state.reg_nonce += 1          # 파일 선택 칸 비우기
+                for k in ("reg_name",):
+                    st.session_state.pop(k, None)
+                flash("success", f"🎉 '{name.strip()}' 등록 완료! (아이템 번호 {res['id']}) 상점에 바로 보여요.")
+                st.rerun()
+            st.error({"ticket_closed": "이미 사용했거나 환불된 등록권이에요.",
+                      "bad_sprite": "그림 변환 결과가 올바르지 않아요. 다시 올려 주세요.",
+                      "bad_name": "이름은 1~20자로 적어 주세요."}.get(res.get("code"), f"등록 실패: {res.get('code')}"))
+    if not ready:
+        st.caption("그림을 올리고 이름을 적으면 [상점에 등록] 버튼이 켜져요.")
+
+    st.divider()
+    customs = load_custom_items()
+    st.markdown(f"#### 🗂️ 등록된 학생 디자인 ({len(customs)})")
+    if not customs:
+        st.caption("아직 등록된 학생 디자인이 없어요.")
+    for c in customs:
+        with st.container(border=True):
+            l, r = st.columns([1, 3])
+            l.markdown(f"<div class='px-avatar'>{avatar_svg({}, 4, extra={c['category']: c['sprite']})}</div>",
+                       unsafe_allow_html=True)
+            r.markdown(f"**{esc(c['name'])}** · {esc(c['category'])} · 🪙{c['price']} · {esc(c['rarity'])}  \n"
+                       f"만든 사람: {esc(c['creator'] or '-')} · 보유 {c['owners']}명 · "
+                       f"{'🟢 판매 중' if c['active'] else '⚫ 숨김'} · `{c['id']}`")
+            label = "상점에서 숨기기" if c["active"] else "다시 판매하기"
+            if r.button(label, key=f"vis_{c['id']}"):
+                res = safe_rpc("set_custom_item_active", p_item_id=c["id"], p_active=not c["active"])
+                if res and res.get("ok"):
+                    load_custom_items.clear()
+                    flash("success", f"'{c['name']}' → {'숨김' if c['active'] else '판매 중'}")
+                    st.rerun()
+    st.caption("숨겨도 이미 산 학생은 계속 착용할 수 있어요.")
+
+    if tickets and any(t["status"] != "unused" for t in tickets):
+        with st.expander("등록권 전체 기록"):
+            st.dataframe(pd.DataFrame([{
+                "번호": t["id"], "학생": t["nickname"], "상태": TICKET_STATUS.get(t["status"], t["status"]),
+                "아이템": t["item_name"] or "", "산 날": to_kst(t["bought_at"])[:10], "메모": t["note"] or "",
+            } for t in tickets]), hide_index=True, use_container_width=True)
 
 
 def admin_settings():
